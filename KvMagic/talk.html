@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<title>Bright theme for Shower</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=680, user-scalable=no">
+	<meta http-equiv="x-ua-compatible" content="ie=edge">
+	<link rel="stylesheet" href="node_modules/shower-bright/styles/screen.css">
+</head>
+<body class="list">
+    <style>
+        .slide h2 { font-weight: bold; }
+    </style>
+	<header class="caption">
+		<h1>Magic behind KV stores</h1>
+		<p>Ivan Paponov</p>
+	</header>
+
+	<section class="slide"><div>
+		<h2>Magic behind KV stores</h2>
+        <p>LSHT, LSMT, <strike>LSD</strike> aka bitcask, leveldb and rocksdb internals</p>
+	</div></section>
+	<section class="slide"><div>
+		<h2>Riak storage backends</h2>
+        <p>
+            <ul>
+                <li>aka embedded key value stores
+                <li>aka bitcask vs leveldb
+            </ul>
+        </p>
+        <p>And some RocksDb (because smartav)
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Masterplan</h2>
+		<ul>
+			<li>how bitcask works</li>
+			<li>how leveldb works</li>
+            <li>backend in events</li>
+            <li>one rocksdb to rule them all</li>
+		</ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Bitcask goals</h2>
+		<ul>
+            <li>low latency per item read or written
+            <li>high throughput (writing an incoming stream of randomness)
+            <li>ability to handle datasets much larger than RAM w/o degradation
+            <li>crash friendliness (fast recovery & not losing data)
+            <li>ease of backup and restore
+            <li>predictable behavior under heavy access load or large volume
+		</ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Side note</h2>
+        <img align='center' src='http://deliveryimages.acm.org/10.1145/1570000/1563874/jacobs3.jpg'>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Bitcask internals</h2>
+        <ul>
+            <li>bitcask instance == directroy
+            <li>1 process writes to it at a time (process == database server)
+            <li>files have max size limit
+            <li>file is closed -> it's immutable from now on
+            <li>in active file - we only append (== sequential writes, no disk seeks)
+            <li>when delete - write tombstone
+        </ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Bitcask file format</h2>
+        <p>
+            crc|tstamp|key size|value size|key|value
+        </p>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Bitcask memtable</h2>
+        <ul>
+            <li>memtable == hash table
+            <li>key => file_id|value_size|value_position|tstamp
+            <li>memtable always updated after write on disk
+            <li>reading with memtable - always 1 disk seek
+        </ul>
+	</div></section>
+
+    <section class="slide"><div>
+		<h2>Bitcask compaction</h2>
+        <ul>
+            <li>saving space over time == compaction
+            <li>scanning non active files only
+            <li>during compaction we create hint files (memtable on disk)
+        </ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Bitcask notes</h2>
+        <ul>
+            <li>no built in data compression
+            <li>no built in cache, relies on OS filesystem cache for read performance
+            <li>fully customizable compaction and automatic expiration
+        </ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Bitcask recap</h2>
+        <ul>
+            <li>high throughput (sequential writes)
+            <li>low latency reads (1 disk seek away)
+            <li>recovery after crash is trivial, no need to replay
+            <li>hint files == fast startup time
+            <li>datasets can be much larger then RAM, but all your keys still need to fit in RAM though
+        </ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Leveldb</h2>
+        <ul>
+            <li>Same but different
+            <li>Built in Google for Chrome
+            <li>Based on Bigtable paper
+        </ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>LSMT</h2>
+        <ul>
+            <li>1996 paper, The Log-Structured Merge-Tree (LSM-Tree)
+            <li>Not only leveldb, but hbase, cassandra, sqlite, mongo 3, etc.
+            <li>main idea - do whatever we can to access disk sequentially
+        </ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>LSMT basics</h2>
+        <ul>
+            <li>memtable -> red-black tree in memory, to preserve sorting (skip list in leveldb)
+            <li>memetable replicated on disk as write-ahead log for recovery
+            <li>memtable flushed to disk (in new file aka <b>sorted</b> string table)
+            <li>no files are updated during writes
+        </ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>LSMT reads</h2>
+        <ul>
+            <li>check memory first
+            <li>if key not found, scan sstables (reverse chronological order)
+            <li>block index at the end of each file
+            <li>bloom filters to figure out which files *might* have key
+        </ul>
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>LSMT compaction</h2>
+        <img src='http://www.benstopford.com/wp-content/uploads/2015/02/Journal2.51-1024x514.png' width='50%'>
+        <ul>
+            <li>merges N files in 1
+            <li>worst case - search every file (if keys does not fit in memory)
+        </ul>
+	</div></section>
+
+
+	<section class="slide"><div>
+		<h2>Levelled compaction</h2>
+        <ul>
+            <li>keys are partitioned across the available files (does not apply for first layer)
+            <li>Files are merged into upper levels one file at a time
+        </ul>
+
+	</div></section>
+
+	<section class="slide"><div>
+		<h2>Levelled compaction vs Basic one</h2>
+        <ul>
+            <li>level-based approach spreads the impact of compaction over time
+            <li>better read performance (file metadata has start & end range values)
+            <li>However the total IO is higher for most workloads
+        </ul>
+	</div></section>
+	
+    <section class="slide"><div>
+		<h2>Leveldb side note</h2>
+        <ul>
+            <li>Built in compression
+            <li>But no automatic expiration
+	</div></section>
+	
+    <section class="slide"><div>
+		<h2>Why on earth Rocksdb</h2>
+        <ul>
+            <li>flash storage (Leveldb is unable to consume all the IOs offered by the storage)
+            <li>single threaded compaction write-stalls caused 99-percentile latency to be tremendously large
+            <li>leveldb not optimized for server workload (db >> ram)
+        </ul>
+	</div></section>
+	
+    <section class="slide"><div>
+		<h2>Side note 1: Latency</h2>
+        <ul>
+            <li>HDD vs SSD: 10 milliseconds vs 100 microseconds
+            <li>Network roundtrip: 50 microseconds
+            <li>0.5% vs 50%
+        </ul>
+	</div></section>
+	
+    <section class="slide"><div>
+		<h2>Side note 2: Meanwhile in NAND flash world</h2>
+        <pre>single value in a cell can be changed from “1” to “0”<br>
+        but not the other way around without reformatting the entire block
+        </pre>
+
+        <pre>aka write amplification<br>
+        each write operation to flash requires more than one physical write I/O
+        </pre>
+
+        <pre>
+        More writes -> less flash lifetime
+        </pre
+	</div></section>
+
+    <section class="slide"><div>
+		<h2>Rocksdb: pluggable everything</h2>
+        <ul>
+            <li> Compression
+            <li> Expiration
+            <li> Multithreaded compactions
+        </ul>
+	</div></section>
+
+    <section class="slide"><div>
+		<h2>Rocksdb: universal compaction</h2>
+        <ul>
+            <li>Write throughput directly depends on the speed of compactions
+            <li>Concurrent compaction: can handle 10x write increase on ssd's
+            <li>lower write amplification, but higher space amplification
+        </ul>
+        <ul>
+            <li>all files in L0
+            <li>files have overlaping keys
+            <li>compaction picks up cronologically adjacent files
+        </ul>
+	</div></section>
+
+    <section class="slide"><div>
+		<h2>Rocksdb: prefix databases & stuff</h2>
+        <ul>
+            <li>prefix bloom filters, which can reduce read amplification of prefix range queries
+            <li>Use hash-map-based memtables to avoid binary search costs in memtables
+        </ul>
+        <ul>
+            <li>Merge key
+        </ul>
+    </div></section>
+
+    <section class="slide"><div>
+		<h2>That's all folks</h2>
+        <ul>
+            <li>Oh right, events
+            <li>Bitcask is good enough
+            <li>Expiration & no sequential access
+        </ul>
+    </div></section>
+
+    <div class="progress"><div></div></div>
+	<script src="node_modules/shower-core/shower.min.js"></script>
+</body>
+</html>
